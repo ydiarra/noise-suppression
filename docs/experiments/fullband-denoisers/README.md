@@ -20,9 +20,9 @@ Main set: 50 random pairs of the VoiceBank+DEMAND test set (48 kHz, CC-BY 4.0).
 On the three real noisy clips in `clips/` (16 kHz sources, DNSMOS OVRL only), DPDFNet8 leads (3.19), then DPDFNet2 48k
 (3.09), DFN3 (3.02) and DTLN (2.76).
 
-## Cost in the browser (`fullband-compare.html`)
+## Cost in the browser
 
-The page renders a clip through each engine's real AudioWorklet in an `OfflineAudioContext`. Measured on an Apple M4 in
+The comparison page (`fullband-compare.html`, on the `experiment/fullband-denoisers` branch) renders a clip through each engine's real AudioWorklet in an `OfflineAudioContext`. Measured on an Apple M4 in
 Chrome, one audio thread, restaurant clip, 3 runs:
 
 | engine | real-time factor |
@@ -71,8 +71,8 @@ engine of this package.
 
 ## Reproduce
 
-- Browser: `./scripts/fetch-deepfilternet3.sh`, `npm run dev`, open `/fullband-compare.html`. Its "Live" buttons A/B
-  the microphone through each engine (use headphones).
+- Browser: on the `experiment/fullband-denoisers` branch, `npm run dev`, open `/fullband-compare.html` (it uses the
+  packaged `createDeepFilterNetAudioWorklet`). It has a blind A/B/C test and live microphone modes (use headphones).
 - Offline: `uv venv --python 3.11 && uv pip install -r requirements.lock.txt`, then download the VoiceBank+DEMAND test
   set (https://datashare.ed.ac.uk/handle/10283/2791, `clean_testset_wav` and `noisy_testset_wav`) into `vbd/` next to
   `run_eval.py`, run `python run_eval.py`, then `python report.py`. Put the DNSMOS `sig_bak_ovr.onnx` and `model_v8.onnx` in `dnsmos/`, from

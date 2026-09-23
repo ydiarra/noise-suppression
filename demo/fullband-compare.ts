@@ -3,9 +3,7 @@
 // render time / clip duration is the real-time factor of one audio thread (lower is better, must stay well under 1).
 import FFT from "fft.js";
 import { createNoiseSuppressionAudioWorklet } from "../src/audio-worklet";
-import dfnWorkletUrl from "./vendor/deepfilternet3/dfn3-worklet-processor.js?url";
-import dfnWasmUrl from "./vendor/deepfilternet3/df_bg.wasm?url";
-import dfnModelUrl from "./vendor/deepfilternet3/DeepFilterNet3_onnx.tar.gz?url";
+import { createDeepFilterNetAudioWorklet } from "../src/deepfilternet";
 
 import restaurantClipUrl from "../clips/restaurant_noisy.wav?url";
 import dogBarkingClipUrl from "../clips/dog_barking_noisy.wav?url";
@@ -44,89 +42,21 @@ for (const noise of ["airconditioning.wav", "restaurant_noisy.wav", "white-noise
   clipSelect.add(new Option(`clean voice + ${noise} (5 dB)`, `mix:${noise}`));
 }
 
-let dfnAssets: Promise<{ wasmModule: WebAssembly.Module; modelBytes: ArrayBuffer }> | undefined;
-
-function loadDfnAssets() {
-  dfnAssets ??= (async () => {
-    const [wasmModule, modelBytes] = await Promise.all([
-      WebAssembly.compileStreaming(fetch(dfnWasmUrl)),
-      fetch(dfnModelUrl).then((response) => {
-        if (!response.ok) {
-          throw new Error("DeepFilterNet3 assets missing: run scripts/fetch-deepfilternet3.sh");
-        }
-        return response.arrayBuffer();
-      }).then(ensureGzipped),
-    ]);
-    return { wasmModule, modelBytes };
-  })();
-  return dfnAssets;
-}
-
-// libDF wants the .tar.gz bytes, but a server that sends `Content-Encoding: gzip` (Vite does) makes the browser
-// hand us the inflated .tar. Re-gzip in that case.
-async function ensureGzipped(bytes: ArrayBuffer): Promise<ArrayBuffer> {
-  const head = new Uint8Array(bytes, 0, 2);
-  if (head[0] === 0x1f && head[1] === 0x8b) {
-    return bytes;
-  }
-  const gzipped = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
-  return new Response(gzipped).arrayBuffer();
-}
-
-interface FrameStats {
-  frames: number;
-  maxMs: number;
-  over5Ms: number;
-  over10Ms: number;
-}
-
-async function createEngine(
-  context: BaseAudioContext,
-  engine: Engine,
-  onStats?: (stats: FrameStats) => void
-): Promise<EngineGraph> {
+async function createEngine(context: BaseAudioContext, engine: Engine): Promise<EngineGraph> {
   if (engine === "dtln") {
     const handle = await createNoiseSuppressionAudioWorklet(context, { bypassUntilReady: false });
     await handle.ready;
     return { node: handle.node, dispose: () => handle.dispose() };
   }
   if (engine === "dfn3") {
-    const { wasmModule, modelBytes } = await loadDfnAssets();
-    await context.audioWorklet.addModule(dfnWorkletUrl);
-    const node = new AudioWorkletNode(context, "deepfilter-audio-processor", {
-      channelCount: 1,
-      channelCountMode: "explicit",
-      outputChannelCount: [1],
-      processorOptions: {
-        wasmModule,
-        modelBytes: modelBytes.slice(0),
-        suppressionLevel: Number(attenInput.value),
-        pauseGate:
-          Number(silenceAttenInput.value) > Number(attenInput.value)
-            ? {
-                extraDb: Number(silenceAttenInput.value) - Number(attenInput.value),
-                lookaheadFrames: 3, // 30 ms of added latency
-                hangoverFrames: 10, // 100 ms
-                releaseDbPerFrame: 0.6, // 60 dB/s
-                speechAboveFloorDb: 10,
-                // Tuning hook for the experiment (window.adaptiveTuning = { ... }).
-                ...(window as unknown as { adaptiveTuning?: object }).adaptiveTuning,
-              }
-            : undefined,
-      },
+    // The packaged engine, exactly what applications get.
+    const handle = await createDeepFilterNetAudioWorklet(context, {
+      bypassUntilReady: false,
+      speechAttenuationDb: Number(attenInput.value),
+      pauseAttenuationDb: Number(silenceAttenInput.value),
     });
-    await new Promise<void>((resolve, reject) => {
-      node.port.onmessage = (event: MessageEvent<{ type: string; message?: string }>) => {
-        if (event.data.type === "ready") {
-          resolve();
-        } else if (event.data.type === "stats") {
-          onStats?.(event.data as unknown as FrameStats);
-        } else {
-          reject(new Error(`DeepFilterNet3 failed to initialize: ${event.data.message}`));
-        }
-      };
-    });
-    return { node, dispose: () => node.disconnect() };
+    await handle.ready;
+    return { node: handle.node, dispose: () => handle.dispose() };
   }
   const node = new GainNode(context);
   return { node, dispose: () => node.disconnect() };
@@ -273,6 +203,7 @@ async function stopLive() {
   if (!live) {
     return;
   }
+  window.clearInterval(statsTimer);
   live.graph.dispose();
   live.stream.getTracks().forEach((track) => track.stop());
   await live.context.close();
@@ -280,6 +211,12 @@ async function stopLive() {
 }
 
 const statsEl = document.querySelector<HTMLParagraphElement>("#stats")!;
+let statsTimer: number | undefined;
+
+interface PlaybackStats {
+  underrunEvents: number;
+  underrunDuration: number;
+}
 
 async function startLive(engine: Engine, showStats: boolean) {
   await stopLive();
@@ -287,16 +224,24 @@ async function startLive(engine: Engine, showStats: boolean) {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: false, channelCount: 1 },
   });
-  statsEl.textContent = "";
-  const graph = await createEngine(context, engine, (stats) => {
-    if (showStats) {
-      statsEl.textContent =
-        `DeepFilterNet3: ${stats.frames} frames of 10 ms, worst ${stats.maxMs} ms, ` +
-        `${stats.over5Ms} over 5 ms, ${stats.over10Ms} over 10 ms (over 10 ms = cannot keep up).`;
-    }
-  });
+  const graph = await createEngine(context, engine);
   context.createMediaStreamSource(stream).connect(graph.node).connect(context.destination);
   live = { context, stream, graph };
+
+  // Real audio glitches (the output ran dry because processing was late), where the browser reports them.
+  window.clearInterval(statsTimer);
+  statsEl.textContent = "";
+  if (showStats) {
+    const startedAt = performance.now();
+    statsTimer = window.setInterval(() => {
+      const stats = (context as unknown as { playbackStats?: PlaybackStats }).playbackStats;
+      const seconds = ((performance.now() - startedAt) / 1000).toFixed(0);
+      statsEl.textContent = stats
+        ? `${engine}, ${seconds} s: ${stats.underrunEvents} audio glitches ` +
+          `(${(stats.underrunDuration * 1000).toFixed(0)} ms in total). 0 = the machine keeps up.`
+        : "This browser does not report audio glitches (AudioContext.playbackStats): use a recent Chrome.";
+    }, 1000);
+  }
 }
 
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-live]")) {
