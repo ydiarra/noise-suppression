@@ -294,6 +294,9 @@
                 this.outputBuffer = new Float32Array(this.bufferSize);
                 // Pre-allocate temp frame buffer for processing
                 this.tempFrame = new Float32Array(frameLength);
+                this.adaptive = options.processorOptions.adaptiveLimit;
+                this.limitDb = options.processorOptions.suppressionLevel ?? 50;
+                this.hangoverFrames = 0;
                 this.isInitialized = true;
                 this.port.postMessage({ type: 'ready' });
                 this.port.onmessage = (event) => {
@@ -318,6 +321,29 @@
                     this.bypass = Boolean(data.value);
                     break;
             }
+        }
+        // Adaptive attenuation limit: keep the gentle speech limit while someone talks (artefacts are audible there),
+        // then after a hangover glide the limit down to the silence limit, so pauses get quieter without the
+        // abrupt gating a high fixed limit causes. Speech = output keeps most of the input energy.
+        adaptLimit(input, output) {
+            const adaptive = this.adaptive;
+            if (!adaptive) return;
+            let inEnergy = 0;
+            let outEnergy = 0;
+            for (let i = 0; i < input.length; i++) inEnergy += input[i] * input[i];
+            for (let i = 0; i < output.length; i++) outEnergy += output[i] * output[i];
+            this.inEma = 0.7 * (this.inEma ?? inEnergy) + 0.3 * inEnergy;
+            this.outEma = 0.7 * (this.outEma ?? outEnergy) + 0.3 * outEnergy;
+            const speaking = this.outEma > this.inEma * 0.1; // output within 10 dB of input
+            if (speaking) {
+                this.hangoverFrames = adaptive.hangoverFrames;
+                this.limitDb = adaptive.speechDb;
+            } else if (this.hangoverFrames > 0) {
+                this.hangoverFrames--;
+            } else {
+                this.limitDb = Math.min(adaptive.silenceDb, this.limitDb + adaptive.releaseDbPerFrame);
+            }
+            df_set_atten_lim(this.dfModel.handle, this.limitDb);
         }
         recordFrameTime(elapsedMs) {
             const stats = (this.stats ??= { frames: 0, maxMs: 0, over5Ms: 0, over10Ms: 0 });
@@ -366,6 +392,7 @@
                 const startMs = Date.now();
                 const processed = df_process_frame(this.dfModel.handle, this.tempFrame);
                 this.recordFrameTime(Date.now() - startMs);
+                this.adaptLimit(this.tempFrame, processed);
                 // Write to output ring buffer
                 for (let i = 0; i < processed.length; i++) {
                     this.outputBuffer[this.outputWritePos] = processed[i];

@@ -8,7 +8,7 @@
       body { font-family: sans-serif; margin: 2rem; line-height: 1.4; }
       td, th { padding: 0.3rem 0.8rem; text-align: left; }
     </style>
-    <script type="module" crossorigin src="./assets/fullband-compare-BBJvxKls.js"></script>
+    <script type="module" crossorigin src="./assets/fullband-compare-DSVkGmhw.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/chunk-BxdBD9KW.js">
     <link rel="modulepreload" crossorigin href="./assets/browser-runtime-options-BU9kybGR.js">
     <link rel="modulepreload" crossorigin href="./assets/audio-worklet-CvzWv1sw.js">
@@ -26,6 +26,8 @@
       <select id="clip"></select>
       DeepFilterNet3 attenuation limit (dB; 100 = unlimited, which gates the background to silence):
       <input id="atten" type="number" value="25" min="0" max="100">
+      in pauses, glide to (dB, same value = off):
+      <input id="atten-silence" type="number" value="45" min="0" max="100">
       <button id="run" type="button">Render</button>
     </p>
     <table>
