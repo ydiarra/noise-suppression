@@ -41,6 +41,20 @@ With no limit (100 dB), DeepFilterNet3 gates the background of `restaurant_noisy
 With a 12, 20 or 30 dB limit there are no gaps after start-up; the background stays, attenuated by that amount. The page
 now defaults to 25 dB. The offline scores above used no limit, so they may flatter aggressive suppression.
 
+### Adaptive limit
+
+A fixed high limit removes more background but brings back abrupt gating. The page therefore glides the limit: 25 dB
+while someone talks (voice artefacts are audible there), then after 100 ms without speech down to 45 dB at 60 dB/s.
+Background attenuation (dB) and abrupt 10 ms level jumps over 20 dB:
+
+| clip | fixed 25 | fixed 45 | adaptive 25 → 45 |
+|---|---|---|---|
+| airconditioning | 25.5 / 3 | 43.1 / 42 | 34.1 / 5 |
+| dog_barking_noisy | 24.5 / 4 | 46.7 / 15 | 39.8 / 10 |
+| restaurant_noisy | 20.4 / 4 | 31.9 / 56 | 26.7 / 14 |
+
+Speech frames lose the same 1-2 dB in every setting. Babble (restaurant) stays hardest: the noise is voices.
+
 ## Conclusion
 
 DeepFilterNet3 is better than DTLN on every metric, sends fullband audio and is cheaper in the browser. DPDFNet is

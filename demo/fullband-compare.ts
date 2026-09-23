@@ -33,6 +33,7 @@ interface EngineGraph {
 const statusEl = document.querySelector<HTMLParagraphElement>("#status")!;
 const clipSelect = document.querySelector<HTMLSelectElement>("#clip")!;
 const attenInput = document.querySelector<HTMLInputElement>("#atten")!;
+const silenceAttenInput = document.querySelector<HTMLInputElement>("#atten-silence")!;
 const resultsEl = document.querySelector<HTMLTableSectionElement>("#results")!;
 const runButton = document.querySelector<HTMLButtonElement>("#run")!;
 
@@ -97,6 +98,17 @@ async function createEngine(
         wasmModule,
         modelBytes: modelBytes.slice(0),
         suppressionLevel: Number(attenInput.value),
+        adaptiveLimit:
+          Number(silenceAttenInput.value) > Number(attenInput.value)
+            ? {
+                speechDb: Number(attenInput.value),
+                silenceDb: Number(silenceAttenInput.value),
+                hangoverFrames: 10, // 100 ms
+                releaseDbPerFrame: 0.6, // 60 dB/s
+                // Tuning hook for the experiment (window.adaptiveTuning = { hangoverFrames, releaseDbPerFrame }).
+                ...(window as unknown as { adaptiveTuning?: object }).adaptiveTuning,
+              }
+            : undefined,
       },
     });
     await new Promise<void>((resolve, reject) => {
