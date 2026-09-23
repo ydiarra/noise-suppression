@@ -1,0 +1,1 @@
+(function(){var e=class extends AudioWorkletProcessor{constructor(e){super(),this.port.postMessage({type:`ready`,processorOptions:e.processorOptions??null})}process(e,t){let n=e[0]?.[0],r=t[0]?.[0];return r&&(n?r.set(n):r.fill(0)),!0}};registerProcessor(`noise-suppression-control`,e)})();

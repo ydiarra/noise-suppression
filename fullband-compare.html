@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fullband Denoiser Comparison</title>
+    <style>
+      body { font-family: sans-serif; margin: 2rem; line-height: 1.4; }
+      td, th { padding: 0.3rem 0.8rem; text-align: left; }
+    </style>
+    <script type="module" crossorigin src="./assets/fullband-compare-BBJvxKls.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/chunk-BxdBD9KW.js">
+    <link rel="modulepreload" crossorigin href="./assets/browser-runtime-options-BU9kybGR.js">
+    <link rel="modulepreload" crossorigin href="./assets/audio-worklet-CvzWv1sw.js">
+    <link rel="modulepreload" crossorigin href="./assets/modulepreload-polyfill-Dezn_h7o.js">
+    <link rel="modulepreload" crossorigin href="./assets/dog_barking_noisy-D_VbMMTe.js">
+    <link rel="modulepreload" crossorigin href="./assets/white-noise-15s-W_v90UGf.js">
+    <link rel="modulepreload" crossorigin href="./assets/fft-DKdREF8T.js">
+  </head>
+  <body>
+    <h1>DTLN (16 kHz) vs DeepFilterNet3 (48 kHz)</h1>
+    <p>Needs <code>scripts/fetch-deepfilternet3.sh</code> once.</p>
+    <p id="status">Loading...</p>
+    <h2>Offline render of a clip</h2>
+    <p>
+      <select id="clip"></select>
+      DeepFilterNet3 attenuation limit (dB, 100 = unlimited):
+      <input id="atten" type="number" value="100" min="0" max="100">
+      <button id="run" type="button">Render</button>
+    </p>
+    <table>
+      <thead><tr><th>engine</th><th>rate</th><th>RTF (1 thread)</th><th>energy &gt; 8 kHz</th><th>listen</th></tr></thead>
+      <tbody id="results"></tbody>
+    </table>
+    <h2>Blind test (headphones)</h2>
+    <p>
+      Pick a situation (quiet room, typing, people talking behind you, fan, sudden noise), talk, and switch between
+      A, B and C. For each letter, rate voice naturalness and noise removal from 1 to 5 and note artefacts (metallic
+      voice, clipped words, pumping). Then click "Reveal", copy the notes and send them. "New order" reshuffles the
+      letters for the next situation.
+    </p>
+    <p>
+      <button type="button" data-blind="0">A</button>
+      <button type="button" data-blind="1">B</button>
+      <button type="button" data-blind="2">C</button>
+      <button type="button" id="blind-shuffle">New order</button>
+      <button type="button" id="blind-reveal-button">Reveal</button>
+    </p>
+    <p id="blind-reveal"></p>
+    <p>
+      <textarea id="blind-notes" rows="8" cols="90"
+        placeholder="Situation: typing. A: voice 4, noise 2. B: voice 3, noise 5, a bit metallic. C: ..."></textarea>
+    </p>
+    <h2>Live microphone, named (headphones)</h2>
+    <p>
+      <button type="button" data-live="raw">Raw</button>
+      <button type="button" data-live="dtln">DTLN</button>
+      <button type="button" data-live="dfn3">DeepFilterNet3</button>
+      <button type="button" data-live="stop">Stop</button>
+    </p>
+    <p id="stats"></p>
+  </body>
+</html>

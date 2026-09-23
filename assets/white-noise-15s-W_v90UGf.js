@@ -1,0 +1,1 @@
+var e=``+new URL(`white-noise-15s-D6A8lr_T.wav`,import.meta.url).href;export{e as t};
