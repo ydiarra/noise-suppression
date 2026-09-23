@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fullband Denoiser Comparison</title>
+    <style>
+      body { font-family: sans-serif; margin: 2rem; line-height: 1.4; }
+      td, th { padding: 0.3rem 0.8rem; text-align: left; }
+    </style>
+    <script type="module" src="/demo/fullband-compare.ts"></script>
+  </head>
+  <body>
+    <h1>DTLN (16 kHz) vs DeepFilterNet3 (48 kHz)</h1>
+    <p>Needs <code>scripts/fetch-deepfilternet3.sh</code> once.</p>
+    <p id="status">Loading...</p>
+    <h2>Offline render of a clip</h2>
+    <p>
+      <select id="clip"></select>
+      DeepFilterNet3 attenuation limit (dB, 100 = unlimited):
+      <input id="atten" type="number" value="100" min="0" max="100">
+      <button id="run" type="button">Render</button>
+    </p>
+    <table>
+      <thead><tr><th>engine</th><th>rate</th><th>RTF (1 thread)</th><th>energy &gt; 8 kHz</th><th>listen</th></tr></thead>
+      <tbody id="results"></tbody>
+    </table>
+    <h2>Live microphone (headphones)</h2>
+    <p>
+      <button type="button" data-live="raw">Raw</button>
+      <button type="button" data-live="dtln">DTLN</button>
+      <button type="button" data-live="dfn3">DeepFilterNet3</button>
+      <button type="button" data-live="stop">Stop</button>
+    </p>
+  </body>
+</html>

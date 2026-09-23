@@ -2,3 +2,9 @@
 /dist
 /pages-dist
 .vite
+/demo/vendor/deepfilternet3/*.wasm
+/demo/vendor/deepfilternet3/*.tar.gz
+/demo/vendor/dpdfnet/*.tflite
+/docs/experiments/fullband-denoisers/out/
+/docs/experiments/fullband-denoisers/vbd/
+/docs/experiments/fullband-denoisers/dnsmos/

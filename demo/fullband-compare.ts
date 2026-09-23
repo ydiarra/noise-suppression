@@ -1,0 +1,239 @@
+// Experiment: DTLN (current, 16 kHz) vs DeepFilterNet3 (48 kHz fullband), same clip, same browser.
+// Each engine renders the whole clip through its real AudioWorklet in an OfflineAudioContext, so
+// render time / clip duration is the real-time factor of one audio thread (lower is better, must stay well under 1).
+import FFT from "fft.js";
+import { createNoiseSuppressionAudioWorklet } from "../src/audio-worklet";
+import dfnWorkletUrl from "./vendor/deepfilternet3/dfn3-worklet-processor.js?url";
+import dfnWasmUrl from "./vendor/deepfilternet3/df_bg.wasm?url";
+import dfnModelUrl from "./vendor/deepfilternet3/DeepFilterNet3_onnx.tar.gz?url";
+
+const CLIPS = [
+  "restaurant_noisy.wav",
+  "dog_barking_noisy.wav",
+  "trump_vs_helicopter.wav",
+  "airconditioning.wav",
+  "clean-voice.wav",
+  "white-noise-15s.wav",
+];
+
+type Engine = "raw" | "dtln" | "dfn3";
+
+interface EngineGraph {
+  node: AudioNode;
+  dispose(): void;
+}
+
+const statusEl = document.querySelector<HTMLParagraphElement>("#status")!;
+const clipSelect = document.querySelector<HTMLSelectElement>("#clip")!;
+const attenInput = document.querySelector<HTMLInputElement>("#atten")!;
+const resultsEl = document.querySelector<HTMLTableSectionElement>("#results")!;
+const runButton = document.querySelector<HTMLButtonElement>("#run")!;
+
+for (const clip of CLIPS) {
+  clipSelect.add(new Option(clip, clip));
+}
+
+let dfnAssets: Promise<{ wasmModule: WebAssembly.Module; modelBytes: ArrayBuffer }> | undefined;
+
+function loadDfnAssets() {
+  dfnAssets ??= (async () => {
+    const [wasmModule, modelBytes] = await Promise.all([
+      WebAssembly.compileStreaming(fetch(dfnWasmUrl)),
+      fetch(dfnModelUrl).then((response) => {
+        if (!response.ok) {
+          throw new Error("DeepFilterNet3 assets missing: run scripts/fetch-deepfilternet3.sh");
+        }
+        return response.arrayBuffer();
+      }).then(ensureGzipped),
+    ]);
+    return { wasmModule, modelBytes };
+  })();
+  return dfnAssets;
+}
+
+// libDF wants the .tar.gz bytes, but a server that sends `Content-Encoding: gzip` (Vite does) makes the browser
+// hand us the inflated .tar. Re-gzip in that case.
+async function ensureGzipped(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+  const head = new Uint8Array(bytes, 0, 2);
+  if (head[0] === 0x1f && head[1] === 0x8b) {
+    return bytes;
+  }
+  const gzipped = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Response(gzipped).arrayBuffer();
+}
+
+async function createEngine(context: BaseAudioContext, engine: Engine): Promise<EngineGraph> {
+  if (engine === "dtln") {
+    const handle = await createNoiseSuppressionAudioWorklet(context, { bypassUntilReady: false });
+    await handle.ready;
+    return { node: handle.node, dispose: () => handle.dispose() };
+  }
+  if (engine === "dfn3") {
+    const { wasmModule, modelBytes } = await loadDfnAssets();
+    await context.audioWorklet.addModule(dfnWorkletUrl);
+    const node = new AudioWorkletNode(context, "deepfilter-audio-processor", {
+      channelCount: 1,
+      channelCountMode: "explicit",
+      outputChannelCount: [1],
+      processorOptions: {
+        wasmModule,
+        modelBytes: modelBytes.slice(0),
+        suppressionLevel: Number(attenInput.value),
+      },
+    });
+    await new Promise<void>((resolve, reject) => {
+      node.port.onmessage = (event: MessageEvent<{ type: string; message?: string }>) => {
+        if (event.data.type === "ready") {
+          resolve();
+        } else {
+          reject(new Error(`DeepFilterNet3 failed to initialize: ${event.data.message}`));
+        }
+      };
+    });
+    return { node, dispose: () => node.disconnect() };
+  }
+  const node = new GainNode(context);
+  return { node, dispose: () => node.disconnect() };
+}
+
+function sampleRateOf(engine: Engine): number {
+  return engine === "dtln" ? 16000 : 48000;
+}
+
+async function decodeClip(clip: string, sampleRate: number): Promise<AudioBuffer> {
+  const bytes = await fetch(`/clips/${clip}`).then((response) => response.arrayBuffer());
+  // decodeAudioData resamples to the context rate.
+  return new OfflineAudioContext(1, 1, sampleRate).decodeAudioData(bytes);
+}
+
+async function renderOffline(engine: Engine, clip: string) {
+  const sampleRate = sampleRateOf(engine);
+  const input = await decodeClip(clip, sampleRate);
+  const context = new OfflineAudioContext(1, input.length, sampleRate);
+  const graph = await createEngine(context, engine);
+  const source = new AudioBufferSourceNode(context, { buffer: input });
+  source.connect(graph.node).connect(context.destination);
+  source.start();
+
+  const startMs = performance.now();
+  const output = await context.startRendering();
+  const renderMs = performance.now() - startMs;
+  graph.dispose();
+
+  return { output, renderMs, durationMs: input.duration * 1000 };
+}
+
+function highBandShare(buffer: AudioBuffer): number {
+  // Share of spectral energy above 8 kHz: what a 16 kHz pipeline can never send.
+  const size = 2048;
+  const fft = new FFT(size);
+  const spectrum = fft.createComplexArray();
+  const cutoffBin = Math.round((8000 / buffer.sampleRate) * size);
+  const data = buffer.getChannelData(0);
+  let high = 0;
+  let total = 0;
+  for (let offset = 0; offset + size <= data.length; offset += size) {
+    fft.realTransform(spectrum, data.subarray(offset, offset + size));
+    for (let bin = 1; bin < size / 2; bin++) {
+      const power = spectrum[2 * bin]! ** 2 + spectrum[2 * bin + 1]! ** 2;
+      total += power;
+      if (bin >= cutoffBin) {
+        high += power;
+      }
+    }
+  }
+  return total > 0 ? high / total : 0;
+}
+
+function toWavUrl(buffer: AudioBuffer): string {
+  const samples = buffer.getChannelData(0);
+  const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const writeString = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) {
+      view.setUint8(offset + i, value.charCodeAt(i));
+    }
+  };
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((sample, i) => {
+    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 0x7fff, true);
+  });
+  return URL.createObjectURL(new Blob([view], { type: "audio/wav" }));
+}
+
+runButton.addEventListener("click", async () => {
+  runButton.disabled = true;
+  resultsEl.replaceChildren();
+  const clip = clipSelect.value;
+  const results: Record<string, unknown>[] = [];
+  try {
+    for (const engine of ["raw", "dtln", "dfn3"] as const) {
+      statusEl.textContent = `Rendering ${clip} with ${engine}...`;
+      const { output, renderMs, durationMs } = await renderOffline(engine, clip);
+      const rtf = renderMs / durationMs;
+      const highBand = highBandShare(output);
+      results.push({ engine, clip, sampleRate: output.sampleRate, durationMs, renderMs, rtf, highBand });
+
+      const row = resultsEl.insertRow();
+      row.insertCell().textContent = engine;
+      row.insertCell().textContent = `${output.sampleRate / 1000} kHz`;
+      row.insertCell().textContent = engine === "raw" ? "—" : rtf.toFixed(3);
+      row.insertCell().textContent = `${(highBand * 100).toFixed(1)} %`;
+      const audio = document.createElement("audio");
+      audio.controls = true;
+      audio.src = toWavUrl(output);
+      row.insertCell().append(audio);
+    }
+    statusEl.textContent = "Done. RTF = render time / clip duration on one audio thread.";
+  } catch (error) {
+    statusEl.textContent = `Failed: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(error);
+  } finally {
+    (window as unknown as { fullbandResults: unknown }).fullbandResults = results;
+    runButton.disabled = false;
+  }
+});
+
+// Live A/B: microphone -> engine -> speakers. Use headphones.
+let live: { context: AudioContext; stream: MediaStream; graph: EngineGraph } | undefined;
+
+async function stopLive() {
+  if (!live) {
+    return;
+  }
+  live.graph.dispose();
+  live.stream.getTracks().forEach((track) => track.stop());
+  await live.context.close();
+  live = undefined;
+}
+
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-live]")) {
+  button.addEventListener("click", async () => {
+    await stopLive();
+    const engine = button.dataset["live"] as Engine | "stop";
+    if (engine === "stop") {
+      statusEl.textContent = "Live stopped.";
+      return;
+    }
+    const context = new AudioContext({ sampleRate: sampleRateOf(engine), latencyHint: "interactive" });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: false, channelCount: 1 },
+    });
+    const graph = await createEngine(context, engine);
+    context.createMediaStreamSource(stream).connect(graph.node).connect(context.destination);
+    live = { context, stream, graph };
+    statusEl.textContent = `Live: ${engine} at ${context.sampleRate / 1000} kHz (headphones!).`;
+  });
+}
+
+statusEl.textContent = "Ready.";

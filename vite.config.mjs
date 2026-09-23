@@ -24,6 +24,7 @@ const demoPageFileNames = [
   "background-noise.html",
   "audio-worklet-validation.html",
   "audio-worklet-benchmark.html",
+  "fullband-compare.html",
   "browser-benchmark-litert.html",
   "browser-benchmark-compare.html",
   "browser-benchmark-litert-manual.html",
