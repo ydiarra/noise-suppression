@@ -24,8 +24,8 @@
     <h2>Offline render of a clip</h2>
     <p>
       <select id="clip"></select>
-      DeepFilterNet3 attenuation limit (dB, 100 = unlimited):
-      <input id="atten" type="number" value="100" min="0" max="100">
+      DeepFilterNet3 attenuation limit (dB; 100 = unlimited, which gates the background to silence):
+      <input id="atten" type="number" value="25" min="0" max="100">
       <button id="run" type="button">Render</button>
     </p>
     <table>
