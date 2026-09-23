@@ -106,6 +106,16 @@
 			value: AudioWorkletURL
 		});
 	}
+	if (!("crypto" in globalThis)) Object.defineProperty(globalThis, "crypto", {
+		configurable: true,
+		value: { getRandomValues(array) {
+			if (array) {
+				const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+				for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+			}
+			return array;
+		} }
+	});
 	//#endregion
 	//#region forks/litertjs-wasm-utils/index.js
 	async function runScript(scriptUrl) {
@@ -1992,6 +2002,55 @@
 		module.ready = Promise.resolve(module);
 		return module;
 	}
+	//#endregion
+	//#region src/float32-ring-buffer.ts
+	var Float32RingBuffer = class {
+		storage;
+		readIndex = 0;
+		writeIndex = 0;
+		availableSamples = 0;
+		constructor(size) {
+			this.storage = new Float32Array(size);
+		}
+		availableRead() {
+			return this.availableSamples;
+		}
+		availableWrite() {
+			return this.storage.length - this.availableSamples;
+		}
+		push(source) {
+			if (source.length > this.availableWrite()) throw new Error("AudioWorklet ring buffer overflow.");
+			let remaining = source.length;
+			let sourceOffset = 0;
+			while (remaining > 0) {
+				const chunk = Math.min(remaining, this.storage.length - this.writeIndex);
+				this.storage.set(source.subarray(sourceOffset, sourceOffset + chunk), this.writeIndex);
+				this.writeIndex = (this.writeIndex + chunk) % this.storage.length;
+				this.availableSamples += chunk;
+				remaining -= chunk;
+				sourceOffset += chunk;
+			}
+		}
+		pullInto(target) {
+			if (target.length > this.availableSamples) return false;
+			let remaining = target.length;
+			let targetOffset = 0;
+			while (remaining > 0) {
+				const chunk = Math.min(remaining, this.storage.length - this.readIndex);
+				target.set(this.storage.subarray(this.readIndex, this.readIndex + chunk), targetOffset);
+				this.readIndex = (this.readIndex + chunk) % this.storage.length;
+				this.availableSamples -= chunk;
+				remaining -= chunk;
+				targetOffset += chunk;
+			}
+			return true;
+		}
+		clear() {
+			this.readIndex = 0;
+			this.writeIndex = 0;
+			this.availableSamples = 0;
+		}
+	};
 	//#endregion
 	//#region __vite-browser-external
 	var require___vite_browser_external = /* @__PURE__ */ __commonJSMin(((exports, module) => {
@@ -13804,53 +13863,6 @@
 	//#endregion
 	//#region src/audio-worklet-processor.ts
 	var NOISE_SUPPRESSION_AUDIO_WORKLET_PROCESSOR_NAME = "workadventure-noise-suppression";
-	var Float32RingBuffer = class {
-		storage;
-		readIndex = 0;
-		writeIndex = 0;
-		availableSamples = 0;
-		constructor(size) {
-			this.storage = new Float32Array(size);
-		}
-		availableRead() {
-			return this.availableSamples;
-		}
-		availableWrite() {
-			return this.storage.length - this.availableSamples;
-		}
-		push(source) {
-			if (source.length > this.availableWrite()) throw new Error("AudioWorklet ring buffer overflow.");
-			let remaining = source.length;
-			let sourceOffset = 0;
-			while (remaining > 0) {
-				const chunk = Math.min(remaining, this.storage.length - this.writeIndex);
-				this.storage.set(source.subarray(sourceOffset, sourceOffset + chunk), this.writeIndex);
-				this.writeIndex = (this.writeIndex + chunk) % this.storage.length;
-				this.availableSamples += chunk;
-				remaining -= chunk;
-				sourceOffset += chunk;
-			}
-		}
-		pullInto(target) {
-			if (target.length > this.availableSamples) return false;
-			let remaining = target.length;
-			let targetOffset = 0;
-			while (remaining > 0) {
-				const chunk = Math.min(remaining, this.storage.length - this.readIndex);
-				target.set(this.storage.subarray(this.readIndex, this.readIndex + chunk), targetOffset);
-				this.readIndex = (this.readIndex + chunk) % this.storage.length;
-				this.availableSamples -= chunk;
-				remaining -= chunk;
-				targetOffset += chunk;
-			}
-			return true;
-		}
-		clear() {
-			this.readIndex = 0;
-			this.writeIndex = 0;
-			this.availableSamples = 0;
-		}
-	};
 	var DENOISE_FRAME_SAMPLES = 512;
 	var RING_BUFFER_CAPACITY = 2048;
 	function nowMs() {
