@@ -60,7 +60,8 @@ the page), so the speech position is known:
 | white noise | 25.1 dB | 37.0 dB | 0 ms |
 
 Abrupt 10 ms level jumps over 20 dB on the real clips stay at the fixed-25 level (3-5), against 15-56 for a fixed 45 dB
-limit. Cost: 30 ms of latency. Babble (restaurant) stays the hardest case: the noise is voices.
+limit. Going to 50 dB in pauses (the page default after listening) adds 0.3-2.4 dB more with still 0 ms of audible speech
+lowered. Cost: 30 ms of latency. Babble (restaurant) stays the hardest case: the noise is voices.
 
 ## Conclusion
 
