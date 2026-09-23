@@ -41,19 +41,26 @@ With no limit (100 dB), DeepFilterNet3 gates the background of `restaurant_noisy
 With a 12, 20 or 30 dB limit there are no gaps after start-up; the background stays, attenuated by that amount. The page
 now defaults to 25 dB. The offline scores above used no limit, so they may flatter aggressive suppression.
 
-### Adaptive limit
+### Pause gate
 
-A fixed high limit removes more background but brings back abrupt gating. The page therefore glides the limit: 25 dB
-while someone talks (voice artefacts are audible there), then after 100 ms without speech down to 45 dB at 60 dB/s.
-Background attenuation (dB) and abrupt 10 ms level jumps over 20 dB:
+A fixed high limit removes more background but brings back abrupt gating. A first attempt glided the libDF limit down
+in pauses; listeners heard the first syllable after a pause clipped (the limit came back up too late).
 
-| clip | fixed 25 | fixed 45 | adaptive 25 → 45 |
+The page now keeps DFN3 at 25 dB and adds a gate after it: voice activity is read on the denoised output (speech stands
+far above the residual whatever the noise), the output is delayed 30 ms so the gate reopens before the first syllable,
+and pauses get up to 20 dB more attenuation (100 ms hangover, 60 dB/s release).
+
+Measured on `clean-voice.wav` repeated with 0.8 s and 1.5 s pauses plus noise at 5 dB SNR ("clean voice + ..." clips on
+the page), so the speech position is known:
+
+| noise | pause attenuation, fixed 25 | pause attenuation, gate 25 → 45 | audible speech lowered > 3 dB by the gate |
 |---|---|---|---|
-| airconditioning | 25.5 / 3 | 43.1 / 42 | 34.1 / 5 |
-| dog_barking_noisy | 24.5 / 4 | 46.7 / 15 | 39.8 / 10 |
-| restaurant_noisy | 20.4 / 4 | 31.9 / 56 | 26.7 / 14 |
+| airconditioning | 20.3 dB | 25.9 dB | 0 ms |
+| restaurant | 19.6 dB | 31.2 dB | 0 ms |
+| white noise | 25.1 dB | 37.0 dB | 0 ms |
 
-Speech frames lose the same 1-2 dB in every setting. Babble (restaurant) stays hardest: the noise is voices.
+Abrupt 10 ms level jumps over 20 dB on the real clips stay at the fixed-25 level (3-5), against 15-56 for a fixed 45 dB
+limit. Cost: 30 ms of latency. Babble (restaurant) stays the hardest case: the noise is voices.
 
 ## Conclusion
 

@@ -294,9 +294,10 @@
                 this.outputBuffer = new Float32Array(this.bufferSize);
                 // Pre-allocate temp frame buffer for processing
                 this.tempFrame = new Float32Array(frameLength);
-                this.adaptive = options.processorOptions.adaptiveLimit;
-                this.limitDb = options.processorOptions.suppressionLevel ?? 50;
-                this.hangoverFrames = 0;
+                this.gate = options.processorOptions.pauseGate;
+                this.gateQueue = [];
+                this.gateDb = 0;
+                this.gateHangover = 0;
                 this.isInitialized = true;
                 this.port.postMessage({ type: 'ready' });
                 this.port.onmessage = (event) => {
@@ -325,25 +326,37 @@
         // Adaptive attenuation limit: keep the gentle speech limit while someone talks (artefacts are audible there),
         // then after a hangover glide the limit down to the silence limit, so pauses get quieter without the
         // abrupt gating a high fixed limit causes. Speech = output keeps most of the input energy.
-        adaptLimit(input, output) {
-            const adaptive = this.adaptive;
-            if (!adaptive) return;
-            let inEnergy = 0;
-            let outEnergy = 0;
-            for (let i = 0; i < input.length; i++) inEnergy += input[i] * input[i];
-            for (let i = 0; i < output.length; i++) outEnergy += output[i] * output[i];
-            this.inEma = 0.7 * (this.inEma ?? inEnergy) + 0.3 * inEnergy;
-            this.outEma = 0.7 * (this.outEma ?? outEnergy) + 0.3 * outEnergy;
-            const speaking = this.outEma > this.inEma * 0.1; // output within 10 dB of input
-            if (speaking) {
-                this.hangoverFrames = adaptive.hangoverFrames;
-                this.limitDb = adaptive.speechDb;
-            } else if (this.hangoverFrames > 0) {
-                this.hangoverFrames--;
-            } else {
-                this.limitDb = Math.min(adaptive.silenceDb, this.limitDb + adaptive.releaseDbPerFrame);
+        // Pause gate: DFN3 runs at the gentle limit (no audible gating on speech), and this adds up to `extraDb` of
+        // attenuation in pauses. Voice activity is read on the denoised output, where speech stands far above the
+        // residual noise whatever the noise type. Output is delayed by `lookaheadFrames`, so the gate is already
+        // reopening when the first syllable comes out instead of catching up after it.
+        applyPauseGate(frame) {
+            const gate = this.gate;
+            if (!gate) return frame;
+            let energy = 0;
+            for (let i = 0; i < frame.length; i++) energy += frame[i] * frame[i];
+            const levelDb = 10 * Math.log10(energy / frame.length + 1e-12);
+            // Residual noise floor: follows drops at once, rises 0.1 dB per 10 ms frame.
+            this.gateFloorDb = Math.min(levelDb, (this.gateFloorDb ?? levelDb) + 0.1);
+            if (levelDb > this.gateFloorDb + gate.speechAboveFloorDb) {
+                this.gateHangover = gate.lookaheadFrames + gate.hangoverFrames;
             }
-            df_set_atten_lim(this.dfModel.handle, this.limitDb);
+            this.gateQueue.push(frame);
+            if (this.gateQueue.length <= gate.lookaheadFrames) return new Float32Array(frame.length);
+            const delayed = this.gateQueue.shift();
+            const fromDb = this.gateDb;
+            if (this.gateHangover > 0) {
+                this.gateHangover--;
+                this.gateDb = Math.min(0, this.gateDb + gate.extraDb / gate.lookaheadFrames);
+            } else {
+                this.gateDb = Math.max(-gate.extraDb, this.gateDb - gate.releaseDbPerFrame);
+            }
+            const out = new Float32Array(delayed.length);
+            for (let i = 0; i < delayed.length; i++) {
+                const db = fromDb + ((this.gateDb - fromDb) * i) / delayed.length;
+                out[i] = delayed[i] * Math.pow(10, db / 20);
+            }
+            return out;
         }
         recordFrameTime(elapsedMs) {
             const stats = (this.stats ??= { frames: 0, maxMs: 0, over5Ms: 0, over10Ms: 0 });
@@ -390,9 +403,9 @@
                 }
                 // Timing for the live performance check (Date.now: performance.now is missing in worklets).
                 const startMs = Date.now();
-                const processed = df_process_frame(this.dfModel.handle, this.tempFrame);
+                const denoised = df_process_frame(this.dfModel.handle, this.tempFrame);
                 this.recordFrameTime(Date.now() - startMs);
-                this.adaptLimit(this.tempFrame, processed);
+                const processed = this.applyPauseGate(denoised);
                 // Write to output ring buffer
                 for (let i = 0; i < processed.length; i++) {
                     this.outputBuffer[this.outputWritePos] = processed[i];

@@ -40,6 +40,9 @@ const runButton = document.querySelector<HTMLButtonElement>("#run")!;
 for (const clip of Object.keys(CLIPS)) {
   clipSelect.add(new Option(clip, clip));
 }
+for (const noise of ["airconditioning.wav", "restaurant_noisy.wav", "white-noise-15s.wav"]) {
+  clipSelect.add(new Option(`clean voice + ${noise} (5 dB)`, `mix:${noise}`));
+}
 
 let dfnAssets: Promise<{ wasmModule: WebAssembly.Module; modelBytes: ArrayBuffer }> | undefined;
 
@@ -98,14 +101,15 @@ async function createEngine(
         wasmModule,
         modelBytes: modelBytes.slice(0),
         suppressionLevel: Number(attenInput.value),
-        adaptiveLimit:
+        pauseGate:
           Number(silenceAttenInput.value) > Number(attenInput.value)
             ? {
-                speechDb: Number(attenInput.value),
-                silenceDb: Number(silenceAttenInput.value),
+                extraDb: Number(silenceAttenInput.value) - Number(attenInput.value),
+                lookaheadFrames: 3, // 30 ms of added latency
                 hangoverFrames: 10, // 100 ms
                 releaseDbPerFrame: 0.6, // 60 dB/s
-                // Tuning hook for the experiment (window.adaptiveTuning = { hangoverFrames, releaseDbPerFrame }).
+                speechAboveFloorDb: 10,
+                // Tuning hook for the experiment (window.adaptiveTuning = { ... }).
                 ...(window as unknown as { adaptiveTuning?: object }).adaptiveTuning,
               }
             : undefined,
@@ -132,7 +136,33 @@ function sampleRateOf(engine: Engine): number {
   return engine === "dtln" ? 16000 : 48000;
 }
 
+// "mix:<noise clip>": clean-voice.wav three times with 0.8 s and 1.5 s pauses, plus that noise at 5 dB SNR (over
+// speech), so where the speech is is known exactly.
 async function decodeClip(clip: string, sampleRate: number): Promise<AudioBuffer> {
+  if (clip.startsWith("mix:")) {
+    const noiseClip = clip.slice(4);
+    const [voice, noise] = await Promise.all([
+      decodeClip("clean-voice.wav", sampleRate),
+      // "mix:none" is the same speech track without noise (the reference for measurements).
+      decodeClip(noiseClip === "none" ? "clean-voice.wav" : noiseClip, sampleRate),
+    ]);
+    const once = voice.getChannelData(0);
+    const pauses = [0.8, 1.5].map((seconds) => Math.round(seconds * sampleRate));
+    const speech = new Float32Array(once.length * 3 + pauses[0]! + pauses[1]!);
+    speech.set(once, 0);
+    speech.set(once, once.length + pauses[0]!);
+    speech.set(once, once.length * 2 + pauses[0]! + pauses[1]!);
+    const noiseData = noise.getChannelData(0);
+    const power = (data: Float32Array) => data.reduce((sum, v) => sum + v * v, 0) / data.length;
+    const gain = noiseClip === "none" ? 0 : Math.sqrt(power(once) / power(noiseData.subarray(0, once.length)) / 10 ** (5 / 10));
+    const mixed = new AudioBuffer({ length: speech.length, sampleRate, numberOfChannels: 1 });
+    mixed.getChannelData(0).set(speech.map((v, i) => v + gain * noiseData[i % noiseData.length]!));
+    return mixed;
+  }
+  return decodeRawClip(clip, sampleRate);
+}
+
+async function decodeRawClip(clip: string, sampleRate: number): Promise<AudioBuffer> {
   const bytes = await fetch(CLIPS[clip]!).then((response) => response.arrayBuffer());
   // decodeAudioData resamples to the context rate.
   return new OfflineAudioContext(1, 1, sampleRate).decodeAudioData(bytes);
