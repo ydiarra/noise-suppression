@@ -319,6 +319,14 @@
                     break;
             }
         }
+        recordFrameTime(elapsedMs) {
+            const stats = (this.stats ??= { frames: 0, maxMs: 0, over5Ms: 0, over10Ms: 0 });
+            stats.frames++;
+            stats.maxMs = Math.max(stats.maxMs, elapsedMs);
+            if (elapsedMs > 5) stats.over5Ms++;
+            if (elapsedMs > 10) stats.over10Ms++;
+            if (stats.frames % 100 === 0) this.port.postMessage({ type: 'stats', ...stats });
+        }
         getInputAvailable() {
             return (this.inputWritePos - this.inputReadPos + this.bufferSize) % this.bufferSize;
         }
@@ -354,7 +362,10 @@
                     this.tempFrame[i] = this.inputBuffer[this.inputReadPos];
                     this.inputReadPos = (this.inputReadPos + 1) % this.bufferSize;
                 }
+                // Timing for the live performance check (Date.now: performance.now is missing in worklets).
+                const startMs = Date.now();
                 const processed = df_process_frame(this.dfModel.handle, this.tempFrame);
+                this.recordFrameTime(Date.now() - startMs);
                 // Write to output ring buffer
                 for (let i = 0; i < processed.length; i++) {
                     this.outputBuffer[this.outputWritePos] = processed[i];

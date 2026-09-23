@@ -7,14 +7,21 @@ import dfnWorkletUrl from "./vendor/deepfilternet3/dfn3-worklet-processor.js?url
 import dfnWasmUrl from "./vendor/deepfilternet3/df_bg.wasm?url";
 import dfnModelUrl from "./vendor/deepfilternet3/DeepFilterNet3_onnx.tar.gz?url";
 
-const CLIPS = [
-  "restaurant_noisy.wav",
-  "dog_barking_noisy.wav",
-  "trump_vs_helicopter.wav",
-  "airconditioning.wav",
-  "clean-voice.wav",
-  "white-noise-15s.wav",
-];
+import restaurantClipUrl from "../clips/restaurant_noisy.wav?url";
+import dogBarkingClipUrl from "../clips/dog_barking_noisy.wav?url";
+import helicopterClipUrl from "../clips/trump_vs_helicopter.wav?url";
+import airConditioningClipUrl from "../clips/airconditioning.wav?url";
+import cleanVoiceClipUrl from "../clips/clean-voice.wav?url";
+import whiteNoiseClipUrl from "../clips/white-noise-15s.wav?url";
+
+const CLIPS: Record<string, string> = {
+  "restaurant_noisy.wav": restaurantClipUrl,
+  "dog_barking_noisy.wav": dogBarkingClipUrl,
+  "trump_vs_helicopter.wav": helicopterClipUrl,
+  "airconditioning.wav": airConditioningClipUrl,
+  "clean-voice.wav": cleanVoiceClipUrl,
+  "white-noise-15s.wav": whiteNoiseClipUrl,
+};
 
 type Engine = "raw" | "dtln" | "dfn3";
 
@@ -29,7 +36,7 @@ const attenInput = document.querySelector<HTMLInputElement>("#atten")!;
 const resultsEl = document.querySelector<HTMLTableSectionElement>("#results")!;
 const runButton = document.querySelector<HTMLButtonElement>("#run")!;
 
-for (const clip of CLIPS) {
+for (const clip of Object.keys(CLIPS)) {
   clipSelect.add(new Option(clip, clip));
 }
 
@@ -62,7 +69,18 @@ async function ensureGzipped(bytes: ArrayBuffer): Promise<ArrayBuffer> {
   return new Response(gzipped).arrayBuffer();
 }
 
-async function createEngine(context: BaseAudioContext, engine: Engine): Promise<EngineGraph> {
+interface FrameStats {
+  frames: number;
+  maxMs: number;
+  over5Ms: number;
+  over10Ms: number;
+}
+
+async function createEngine(
+  context: BaseAudioContext,
+  engine: Engine,
+  onStats?: (stats: FrameStats) => void
+): Promise<EngineGraph> {
   if (engine === "dtln") {
     const handle = await createNoiseSuppressionAudioWorklet(context, { bypassUntilReady: false });
     await handle.ready;
@@ -85,6 +103,8 @@ async function createEngine(context: BaseAudioContext, engine: Engine): Promise<
       node.port.onmessage = (event: MessageEvent<{ type: string; message?: string }>) => {
         if (event.data.type === "ready") {
           resolve();
+        } else if (event.data.type === "stats") {
+          onStats?.(event.data as unknown as FrameStats);
         } else {
           reject(new Error(`DeepFilterNet3 failed to initialize: ${event.data.message}`));
         }
@@ -101,7 +121,7 @@ function sampleRateOf(engine: Engine): number {
 }
 
 async function decodeClip(clip: string, sampleRate: number): Promise<AudioBuffer> {
-  const bytes = await fetch(`/clips/${clip}`).then((response) => response.arrayBuffer());
+  const bytes = await fetch(CLIPS[clip]!).then((response) => response.arrayBuffer());
   // decodeAudioData resamples to the context rate.
   return new OfflineAudioContext(1, 1, sampleRate).decodeAudioData(bytes);
 }
@@ -217,23 +237,70 @@ async function stopLive() {
   live = undefined;
 }
 
+const statsEl = document.querySelector<HTMLParagraphElement>("#stats")!;
+
+async function startLive(engine: Engine, showStats: boolean) {
+  await stopLive();
+  const context = new AudioContext({ sampleRate: sampleRateOf(engine), latencyHint: "interactive" });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: false, channelCount: 1 },
+  });
+  statsEl.textContent = "";
+  const graph = await createEngine(context, engine, (stats) => {
+    if (showStats) {
+      statsEl.textContent =
+        `DeepFilterNet3: ${stats.frames} frames of 10 ms, worst ${stats.maxMs} ms, ` +
+        `${stats.over5Ms} over 5 ms, ${stats.over10Ms} over 10 ms (over 10 ms = cannot keep up).`;
+    }
+  });
+  context.createMediaStreamSource(stream).connect(graph.node).connect(context.destination);
+  live = { context, stream, graph };
+}
+
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-live]")) {
   button.addEventListener("click", async () => {
-    await stopLive();
     const engine = button.dataset["live"] as Engine | "stop";
     if (engine === "stop") {
+      await stopLive();
       statusEl.textContent = "Live stopped.";
       return;
     }
-    const context = new AudioContext({ sampleRate: sampleRateOf(engine), latencyHint: "interactive" });
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: false, channelCount: 1 },
-    });
-    const graph = await createEngine(context, engine);
-    context.createMediaStreamSource(stream).connect(graph.node).connect(context.destination);
-    live = { context, stream, graph };
-    statusEl.textContent = `Live: ${engine} at ${context.sampleRate / 1000} kHz (headphones!).`;
+    await startLive(engine, true);
+    statusEl.textContent = `Live: ${engine} at ${sampleRateOf(engine) / 1000} kHz (headphones!).`;
   });
 }
+
+// Blind A/B/C: letters map to a random order of engines until "Reveal".
+const blindEngines: Engine[] = ["raw", "dtln", "dfn3"];
+let blindOrder: Engine[] = [];
+const blindRevealEl = document.querySelector<HTMLParagraphElement>("#blind-reveal")!;
+const blindNotesEl = document.querySelector<HTMLTextAreaElement>("#blind-notes")!;
+
+function shuffleBlind() {
+  blindOrder = [...blindEngines].sort(() => Math.random() - 0.5);
+  blindRevealEl.textContent = "";
+}
+shuffleBlind();
+
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-blind]")) {
+  button.addEventListener("click", async () => {
+    const index = Number(button.dataset["blind"]);
+    await startLive(blindOrder[index]!, false);
+    statusEl.textContent = `Blind: listening to ${"ABC"[index]}.`;
+  });
+}
+
+document.querySelector("#blind-shuffle")!.addEventListener("click", async () => {
+  await stopLive();
+  shuffleBlind();
+  statusEl.textContent = "New blind order. Rate A, B and C again for the next situation.";
+});
+
+document.querySelector("#blind-reveal-button")!.addEventListener("click", async () => {
+  await stopLive();
+  const mapping = blindOrder.map((engine, i) => `${"ABC"[i]} = ${engine}`).join(", ");
+  blindRevealEl.textContent = mapping;
+  blindNotesEl.value += `${blindNotesEl.value ? "\n" : ""}[${mapping}] ${navigator.userAgent}`;
+});
 
 statusEl.textContent = "Ready.";
