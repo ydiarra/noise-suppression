@@ -34,6 +34,13 @@ DPDFNet was not ported to the browser. It needs TFLite resource variables (`VAR_
 costs 0.20 real-time factor natively on one M4 core for the 48k model (DPDFNet2), about 7× DeepFilterNet3. It would not
 hold real time in a worklet on an ordinary laptop.
 
+## Attenuation limit: required
+
+With no limit (100 dB), DeepFilterNet3 gates the background of `restaurant_noisy.wav` to digital silence between words:
+39 silent gaps longer than 5 ms, up to 620 ms. Listeners hear dropouts, pumping and a metallic, unnatural background.
+With a 12, 20 or 30 dB limit there are no gaps after start-up; the background stays, attenuated by that amount. The page
+now defaults to 25 dB. The offline scores above used no limit, so they may flatter aggressive suppression.
+
 ## Conclusion
 
 DeepFilterNet3 is better than DTLN on every metric, sends fullband audio and is cheaper in the browser. DPDFNet is
