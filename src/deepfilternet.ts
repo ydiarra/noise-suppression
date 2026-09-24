@@ -167,6 +167,8 @@ export async function createDeepFilterNetAudioWorklet(
             hangoverFrames: 10, // 100 ms
             releaseDbPerFrame: 0.6, // 60 dB/s
             speechAboveFloorDb: 10,
+            // DeepFilterNet3 removes keystrokes down to its limit (speechAttenuationDb); speech loses a few dB.
+            maxSpeechAttenuationDb: Math.min(15, speechAttenuationDb - 5),
           }
         : undefined,
     bypassUntilReady: options.bypassUntilReady ?? true,
