@@ -95,8 +95,24 @@ async function decodeClip(clip: string, sampleRate: number): Promise<AudioBuffer
   return decodeRawClip(clip, sampleRate);
 }
 
+// The visitor's own sound (recorded or loaded), as encoded audio bytes, listed in the clip menu.
+const USER_CLIP = "user:";
+const userClips = new Map<string, ArrayBuffer>();
+
+function addUserClip(label: string, bytes: ArrayBuffer): void {
+  const value = `${USER_CLIP}${label}`;
+  userClips.set(value, bytes);
+  if (![...clipSelect.options].some((option) => option.value === value)) {
+    clipSelect.add(new Option(`★ ${label}`, value), 0);
+  }
+  clipSelect.value = value;
+}
+
 async function decodeRawClip(clip: string, sampleRate: number): Promise<AudioBuffer> {
-  const bytes = await fetch(CLIPS[clip]!).then((response) => response.arrayBuffer());
+  const userBytes = userClips.get(clip);
+  const bytes = userBytes
+    ? userBytes.slice(0) // decodeAudioData detaches its argument
+    : await fetch(CLIPS[clip]!).then((response) => response.arrayBuffer());
   // decodeAudioData resamples to the context rate.
   return new OfflineAudioContext(1, 1, sampleRate).decodeAudioData(bytes);
 }
@@ -159,7 +175,10 @@ function attenuationTimeline(input: AudioBuffer, output: AudioBuffer): string {
 }
 
 function toWavUrl(buffer: AudioBuffer): string {
-  const samples = buffer.getChannelData(0);
+  return URL.createObjectURL(new Blob([encodeWav(buffer.getChannelData(0), buffer.sampleRate)], { type: "audio/wav" }));
+}
+
+function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
   const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
   const writeString = (offset: number, value: string) => {
     for (let i = 0; i < value.length; i++) {
@@ -172,8 +191,8 @@ function toWavUrl(buffer: AudioBuffer): string {
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
-  view.setUint32(24, buffer.sampleRate, true);
-  view.setUint32(28, buffer.sampleRate * 2, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   writeString(36, "data");
@@ -181,7 +200,7 @@ function toWavUrl(buffer: AudioBuffer): string {
   samples.forEach((sample, i) => {
     view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 0x7fff, true);
   });
-  return URL.createObjectURL(new Blob([view], { type: "audio/wav" }));
+  return view.buffer;
 }
 
 runButton.addEventListener("click", async () => {
@@ -209,7 +228,12 @@ runButton.addEventListener("click", async () => {
       const audio = document.createElement("audio");
       audio.controls = true;
       audio.src = toWavUrl(output);
-      row.insertCell().append(audio);
+      const download = document.createElement("a");
+      download.href = audio.src;
+      download.download = `${clip.replace(/^(mix|user):/, "")}__${engine}.wav`;
+      download.textContent = "download";
+      const cell = row.insertCell();
+      cell.append(audio, " ", download);
     }
     statusEl.textContent = "Done. RTF = render time / clip duration on one audio thread.";
   } catch (error) {
@@ -313,6 +337,79 @@ document.querySelector("#blind-reveal-button")!.addEventListener("click", async 
   const mapping = blindOrder.map((engine, i) => `${"ABC"[i]} = ${engine}`).join(", ");
   blindRevealEl.textContent = mapping;
   blindNotesEl.value += `${blindNotesEl.value ? "\n" : ""}[${mapping}] ${navigator.userAgent}`;
+});
+
+// Record your own sound: the raw microphone (no browser noise suppression, like WorkAdventure feeds its denoiser),
+// captured as PCM so every engine starts from exactly the same samples.
+const recordButton = document.querySelector<HTMLButtonElement>("#record")!;
+const fileInput = document.querySelector<HTMLInputElement>("#file")!;
+const MAX_RECORDING_SECONDS = 60;
+let recording: { context: AudioContext; stream: MediaStream; chunks: Float32Array[]; timer: number } | undefined;
+let recordingCount = 0;
+
+async function stopRecording(): Promise<void> {
+  if (!recording) {
+    return;
+  }
+  const { context, stream, chunks, timer } = recording;
+  recording = undefined;
+  window.clearInterval(timer);
+  stream.getTracks().forEach((track) => track.stop());
+  await context.close();
+  const samples = new Float32Array(chunks.reduce((length, chunk) => length + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    samples.set(chunk, offset);
+    offset += chunk.length;
+  }
+  recordButton.textContent = "● Record";
+  recordingCount++;
+  const seconds = (samples.length / context.sampleRate).toFixed(1);
+  addUserClip(`my recording ${recordingCount} (${seconds} s)`, encodeWav(samples, context.sampleRate));
+  statusEl.textContent = `Recorded ${seconds} s. It is selected in the clip menu: click Render to hear it through each engine.`;
+}
+
+recordButton.addEventListener("click", async () => {
+  if (recording) {
+    await stopRecording();
+    return;
+  }
+  try {
+    await stopLive();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: false, channelCount: 1 },
+    });
+    const context = new AudioContext({ sampleRate: 48000 });
+    const chunks: Float32Array[] = [];
+    // ScriptProcessorNode is deprecated but needs no extra module, which is enough for a demo recorder.
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (event) => chunks.push(event.inputBuffer.getChannelData(0).slice());
+    context.createMediaStreamSource(stream).connect(processor);
+    processor.connect(context.destination); // silent output, but needed for the node to run
+    const startedAt = performance.now();
+    const timer = window.setInterval(() => {
+      const elapsed = (performance.now() - startedAt) / 1000;
+      recordButton.textContent = `■ Stop (${elapsed.toFixed(0)} s)`;
+      if (elapsed >= MAX_RECORDING_SECONDS) {
+        void stopRecording();
+      }
+    }, 250);
+    recording = { context, stream, chunks, timer };
+    recordButton.textContent = "■ Stop (0 s)";
+    statusEl.textContent = "Recording the raw microphone... make some noise, talk, type.";
+  } catch (error) {
+    statusEl.textContent = `Could not record: ${error instanceof Error ? error.message : String(error)}`;
+  }
+});
+
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files?.[0];
+  if (!file) {
+    return;
+  }
+  addUserClip(file.name, await file.arrayBuffer());
+  statusEl.textContent = `Loaded ${file.name}. It is selected in the clip menu: click Render.`;
+  fileInput.value = "";
 });
 
 statusEl.textContent = "Ready.";
