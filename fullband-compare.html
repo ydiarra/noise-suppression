@@ -8,7 +8,7 @@
       body { font-family: sans-serif; margin: 2rem; line-height: 1.4; }
       td, th { padding: 0.3rem 0.8rem; text-align: left; }
     </style>
-    <script type="module" crossorigin src="./assets/fullband-compare-BtSVCW87.js"></script>
+    <script type="module" crossorigin src="./assets/fullband-compare-DAq9WkBF.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/chunk-BxdBD9KW.js">
     <link rel="modulepreload" crossorigin href="./assets/browser-runtime-options-BU9kybGR.js">
     <link rel="modulepreload" crossorigin href="./assets/audio-worklet-CvzWv1sw.js">
@@ -21,6 +21,17 @@
     <h1>DTLN (16 kHz) vs DeepFilterNet3 (48 kHz)</h1>
     <p>Chrome or Edge recommended, with headphones. </p>
     <p id="status">Loading...</p>
+    <h2>Your own sound</h2>
+    <p>
+      Record a few seconds with your microphone (talk, type, let the fan or the neighbours run), or load an audio file.
+      It lands at the top of the clip menu below: click Render, then listen to it through each engine, as many times as
+      you like. The recording is the raw microphone, without the browser's noise suppression, and never leaves your
+      browser.
+    </p>
+    <p>
+      <button id="record" type="button">● Record</button>
+      or load a file: <input id="file" type="file" accept="audio/*">
+    </p>
     <h2>Offline render of a clip</h2>
     <p>
       Keyboard test: pick <code>keyboard-typing-synthetic.wav</code> (typing 1-11 s, pause, typing 13-16 s) and read
