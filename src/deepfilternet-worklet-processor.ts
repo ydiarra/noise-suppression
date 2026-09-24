@@ -82,7 +82,7 @@ class DeepFilterNetProcessor extends AudioWorkletProcessor {
       while (this.inputRing.availableRead() >= this.frameSamples) {
         this.inputRing.pullInto(this.frame);
         const denoised = df_process_frame(this.state, this.frame);
-        this.outputRing.push(this.pauseGate ? this.pauseGate.process(denoised) : denoised);
+        this.outputRing.push(this.pauseGate ? this.pauseGate.process(denoised, this.frame) : denoised);
       }
       // Underflow only happens in the first frame (480-sample frames, 128-sample quanta).
       if (!this.outputRing.pullInto(output)) {
