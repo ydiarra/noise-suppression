@@ -11,6 +11,7 @@ import helicopterClipUrl from "../clips/trump_vs_helicopter.wav?url";
 import airConditioningClipUrl from "../clips/airconditioning.wav?url";
 import cleanVoiceClipUrl from "../clips/clean-voice.wav?url";
 import whiteNoiseClipUrl from "../clips/white-noise-15s.wav?url";
+import keyboardClipUrl from "../clips/keyboard-typing-synthetic.wav?url";
 
 const CLIPS: Record<string, string> = {
   "restaurant_noisy.wav": restaurantClipUrl,
@@ -19,6 +20,8 @@ const CLIPS: Record<string, string> = {
   "airconditioning.wav": airConditioningClipUrl,
   "clean-voice.wav": cleanVoiceClipUrl,
   "white-noise-15s.wav": whiteNoiseClipUrl,
+  // Synthetic keystrokes: typing 1-11 s, a pause, typing again 13-16 s.
+  "keyboard-typing-synthetic.wav": keyboardClipUrl,
 };
 
 type Engine = "raw" | "dtln" | "dfn3";
@@ -38,7 +41,7 @@ const runButton = document.querySelector<HTMLButtonElement>("#run")!;
 for (const clip of Object.keys(CLIPS)) {
   clipSelect.add(new Option(clip, clip));
 }
-for (const noise of ["airconditioning.wav", "restaurant_noisy.wav", "white-noise-15s.wav"]) {
+for (const noise of ["airconditioning.wav", "restaurant_noisy.wav", "white-noise-15s.wav", "keyboard-typing-synthetic.wav"]) {
   clipSelect.add(new Option(`clean voice + ${noise} (5 dB)`, `mix:${noise}`));
 }
 
@@ -112,7 +115,7 @@ async function renderOffline(engine: Engine, clip: string) {
   const renderMs = performance.now() - startMs;
   graph.dispose();
 
-  return { output, renderMs, durationMs: input.duration * 1000 };
+  return { input, output, renderMs, durationMs: input.duration * 1000 };
 }
 
 function highBandShare(buffer: AudioBuffer): number {
@@ -135,6 +138,24 @@ function highBandShare(buffer: AudioBuffer): number {
     }
   }
   return total > 0 ? high / total : 0;
+}
+
+// Attenuation (input level - output level) per 0.5 s: shows whether a noise is removed at once or only after a while.
+function attenuationTimeline(input: AudioBuffer, output: AudioBuffer): string {
+  const step = Math.round(input.sampleRate / 2);
+  const inData = input.getChannelData(0);
+  const outData = output.getChannelData(0);
+  const values: string[] = [];
+  for (let start = 0; start + step <= inData.length; start += step) {
+    let inEnergy = 0;
+    let outEnergy = 0;
+    for (let i = start; i < start + step; i++) {
+      inEnergy += inData[i]! ** 2;
+      outEnergy += outData[i]! ** 2;
+    }
+    values.push((10 * Math.log10((inEnergy + 1e-12) / (outEnergy + 1e-12))).toFixed(0));
+  }
+  return values.join(" ");
 }
 
 function toWavUrl(buffer: AudioBuffer): string {
@@ -171,7 +192,7 @@ runButton.addEventListener("click", async () => {
   try {
     for (const engine of ["raw", "dtln", "dfn3"] as const) {
       statusEl.textContent = `Rendering ${clip} with ${engine}...`;
-      const { output, renderMs, durationMs } = await renderOffline(engine, clip);
+      const { input, output, renderMs, durationMs } = await renderOffline(engine, clip);
       const rtf = renderMs / durationMs;
       const highBand = highBandShare(output);
       results.push({ engine, clip, sampleRate: output.sampleRate, durationMs, renderMs, rtf, highBand });
@@ -181,6 +202,10 @@ runButton.addEventListener("click", async () => {
       row.insertCell().textContent = `${output.sampleRate / 1000} kHz`;
       row.insertCell().textContent = engine === "raw" ? "—" : rtf.toFixed(3);
       row.insertCell().textContent = `${(highBand * 100).toFixed(1)} %`;
+      const timeline = row.insertCell();
+      timeline.textContent = engine === "raw" ? "" : attenuationTimeline(input, output);
+      timeline.style.fontFamily = "monospace";
+      timeline.style.fontSize = "12px";
       const audio = document.createElement("audio");
       audio.controls = true;
       audio.src = toWavUrl(output);

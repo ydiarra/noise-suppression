@@ -63,6 +63,21 @@ Abrupt 10 ms level jumps over 20 dB on the real clips stay at the fixed-25 level
 limit. Going to 50 dB in pauses (the page default after listening) adds 0.3-2.4 dB more with still 0 ms of audible speech
 lowered. Cost: 30 ms of latency. Babble (restaurant) stays the hardest case: the noise is voices.
 
+## Keyboard
+
+Reported by users: the keyboard is heard at first, then less if the person keeps typing. `clips/keyboard-typing-synthetic.wav`
+(synthetic keystrokes: typing 1-11 s, a 2 s pause, typing 13-16 s) reproduces it. Attenuation per 0.5 s, from the page's
+"attenuation per 0.5 s" column, typing starting at the 3rd value:
+
+| engine | start of typing | after the pause | steady |
+|---|---|---|---|
+| DTLN | 3, 18, 23 dB | 5, 7, 14 dB | 16-24 dB |
+| DeepFilterNet3 + gate | 17, 45 dB | 45 dB at once | ~45 dB |
+
+DTLN learns the keyboard in about 0.6 s and starts over after every pause; the browser's built-in suppression barely
+touches keystrokes (1-2 dB). DeepFilterNet3 removes them from the first ones; the pause gate ignores what the model
+removed, so typing alone reaches the pause depth. Synthetic keystrokes: confirm with a real keyboard (live mode).
+
 ## Conclusion
 
 DeepFilterNet3 is better than DTLN on every metric, sends fullband audio and is cheaper in the browser. DPDFNet is
