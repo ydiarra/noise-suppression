@@ -8,7 +8,7 @@
       body { font-family: sans-serif; margin: 2rem; line-height: 1.4; }
       td, th { padding: 0.3rem 0.8rem; text-align: left; }
     </style>
-    <script type="module" crossorigin src="./assets/fullband-compare-tbEYafMq.js"></script>
+    <script type="module" crossorigin src="./assets/fullband-compare-BtSVCW87.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/chunk-BxdBD9KW.js">
     <link rel="modulepreload" crossorigin href="./assets/browser-runtime-options-BU9kybGR.js">
     <link rel="modulepreload" crossorigin href="./assets/audio-worklet-CvzWv1sw.js">
@@ -23,6 +23,11 @@
     <p id="status">Loading...</p>
     <h2>Offline render of a clip</h2>
     <p>
+      Keyboard test: pick <code>keyboard-typing-synthetic.wav</code> (typing 1-11 s, pause, typing 13-16 s) and read
+      the attenuation column. A good denoiser removes the keystrokes from the first ones and right after the pause; a
+      denoiser that has to "learn" the noise starts low and climbs.
+    </p>
+    <p>
       <select id="clip"></select>
       DeepFilterNet3 attenuation limit (dB; 100 = unlimited, which gates the background to silence):
       <input id="atten" type="number" value="25" min="0" max="100">
@@ -31,7 +36,7 @@
       <button id="run" type="button">Render</button>
     </p>
     <table>
-      <thead><tr><th>engine</th><th>rate</th><th>RTF (1 thread)</th><th>energy &gt; 8 kHz</th><th>listen</th></tr></thead>
+      <thead><tr><th>engine</th><th>rate</th><th>RTF (1 thread)</th><th>energy &gt; 8 kHz</th><th>attenuation per 0.5 s (dB)</th><th>listen</th></tr></thead>
       <tbody id="results"></tbody>
     </table>
     <h2>Blind test (headphones)</h2>

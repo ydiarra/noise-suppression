@@ -429,13 +429,15 @@
 	};
 	//#endregion
 	//#region src/pause-gate.ts
+	var INPUT_HISTORY_FRAMES = 4;
 	var DIGITAL_SILENCE_DB = -90;
 	/**
 	* Attenuates the pauses of an already denoised signal, frame by frame.
 	*
 	* The denoiser runs at a gentle limit so speech keeps no gating artefacts; this gate removes up to
 	* `extraAttenuationDb` more in pauses. Speech is detected on the denoised frames, where it stands far above the
-	* residual noise whatever the noise type. Output is delayed by `lookaheadFrames`, so the gate ramps open over those
+	* residual noise whatever the noise type, and which the denoiser kept (so keystrokes and other noise bursts it removes
+	* do not count). Output is delayed by `lookaheadFrames`, so the gate ramps open over those
 	* frames and is fully open when the first speech frame comes out.
 	*/
 	var PauseGate = class {
@@ -444,18 +446,23 @@
 		gainDb = 0;
 		hangover = 0;
 		floorDb;
+		inputLevelsDb = [];
 		constructor(options) {
 			this.options = options;
 		}
-		/** Takes one denoised frame and returns the gated frame from `lookaheadFrames` earlier (silence at first). */
-		process(frame) {
-			const { extraAttenuationDb, lookaheadFrames, hangoverFrames, releaseDbPerFrame, speechAboveFloorDb } = this.options;
-			let energy = 0;
-			for (const sample of frame) energy += sample * sample;
-			const levelDb = 10 * Math.log10(energy / frame.length + 1e-12);
+		/**
+		* Takes one denoised frame and the input frame the denoiser was just given, and returns the gated frame from
+		* `lookaheadFrames` earlier (silence at first).
+		*/
+		process(frame, input) {
+			const { extraAttenuationDb, lookaheadFrames, hangoverFrames, releaseDbPerFrame, speechAboveFloorDb, maxSpeechAttenuationDb } = this.options;
+			const levelDb = levelOf(frame);
+			this.inputLevelsDb.push(levelOf(input));
+			if (this.inputLevelsDb.length > INPUT_HISTORY_FRAMES) this.inputLevelsDb.shift();
+			const keptByDenoiser = levelDb - Math.max(...this.inputLevelsDb) > -maxSpeechAttenuationDb;
 			if (levelDb > DIGITAL_SILENCE_DB) {
 				this.floorDb = Math.min(levelDb, (this.floorDb ?? levelDb) + .1);
-				if (levelDb > this.floorDb + speechAboveFloorDb) this.hangover = lookaheadFrames + hangoverFrames;
+				if (levelDb > this.floorDb + speechAboveFloorDb && keptByDenoiser) this.hangover = lookaheadFrames + hangoverFrames;
 			}
 			this.queue.push(frame.slice());
 			if (this.queue.length <= lookaheadFrames) return new Float32Array(frame.length);
@@ -472,6 +479,11 @@
 			return delayed;
 		}
 	};
+	function levelOf(frame) {
+		let energy = 0;
+		for (const sample of frame) energy += sample * sample;
+		return 10 * Math.log10(energy / frame.length + 1e-12);
+	}
 	//#endregion
 	//#region src/deepfilternet-shared.ts
 	var DEEPFILTERNET_AUDIO_WORKLET_PROCESSOR_NAME = "workadventure-deepfilternet";
@@ -529,7 +541,7 @@
 				while (this.inputRing.availableRead() >= this.frameSamples) {
 					this.inputRing.pullInto(this.frame);
 					const denoised = df_process_frame(this.state, this.frame);
-					this.outputRing.push(this.pauseGate ? this.pauseGate.process(denoised) : denoised);
+					this.outputRing.push(this.pauseGate ? this.pauseGate.process(denoised, this.frame) : denoised);
 				}
 				if (!this.outputRing.pullInto(output)) output.fill(0);
 			} catch (error) {
