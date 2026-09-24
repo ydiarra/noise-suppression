@@ -22,6 +22,8 @@
       browser.
     </p>
     <p>
+      Microphone: <select id="mic"><option value="">Default microphone</option></select>
+      <button id="list-mics" type="button">List microphones</button>
       <button id="record" type="button">● Record</button>
       or load a file: <input id="file" type="file" accept="audio/*">
     </p>
@@ -63,6 +65,7 @@
         placeholder="Situation: typing. A: voice 4, noise 2. B: voice 3, noise 5, a bit metallic. C: ..."></textarea>
     </p>
     <h2>Live microphone, named (headphones)</h2>
+    <p>The live modes and the blind test use the microphone chosen in "Your own sound".</p>
     <p>
       <button type="button" data-live="raw">Raw</button>
       <button type="button" data-live="dtln">DTLN</button>

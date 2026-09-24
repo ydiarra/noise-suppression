@@ -245,6 +245,48 @@ runButton.addEventListener("click", async () => {
   }
 });
 
+// Microphone choice, shared by the recorder and the live modes. Browsers only reveal device names once the page has
+// been allowed to use a microphone, so the list is refreshed after each successful capture.
+const micSelect = document.querySelector<HTMLSelectElement>("#mic")!;
+
+async function refreshMicrophones(): Promise<void> {
+  const selected = micSelect.value;
+  const microphones = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "audioinput");
+  micSelect.replaceChildren(new Option("Default microphone", ""));
+  microphones.forEach((device, index) => {
+    if (device.deviceId && device.deviceId !== "default") {
+      micSelect.add(new Option(device.label || `Microphone ${index + 1}`, device.deviceId));
+    }
+  });
+  micSelect.value = [...micSelect.options].some((option) => option.value === selected) ? selected : "";
+}
+
+// Same processing as WorkAdventure feeding its own denoiser: no browser noise suppression.
+async function openMicrophone(): Promise<MediaStream> {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      autoGainControl: true,
+      noiseSuppression: false,
+      channelCount: 1,
+      ...(micSelect.value ? { deviceId: { exact: micSelect.value } } : {}),
+    },
+  });
+  await refreshMicrophones();
+  return stream;
+}
+
+document.querySelector("#list-mics")!.addEventListener("click", async () => {
+  try {
+    (await openMicrophone()).getTracks().forEach((track) => track.stop());
+    statusEl.textContent = `${micSelect.options.length - 1} microphone(s) found.`;
+  } catch (error) {
+    statusEl.textContent = `Could not list microphones: ${error instanceof Error ? error.message : String(error)}`;
+  }
+});
+navigator.mediaDevices.addEventListener("devicechange", () => void refreshMicrophones());
+void refreshMicrophones();
+
 // Live A/B: microphone -> engine -> speakers. Use headphones.
 let live: { context: AudioContext; stream: MediaStream; graph: EngineGraph } | undefined;
 
@@ -270,9 +312,7 @@ interface PlaybackStats {
 async function startLive(engine: Engine, showStats: boolean) {
   await stopLive();
   const context = new AudioContext({ sampleRate: sampleRateOf(engine), latencyHint: "interactive" });
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: false, channelCount: 1 },
-  });
+  const stream = await openMicrophone();
   const graph = await createEngine(context, engine);
   context.createMediaStreamSource(stream).connect(graph.node).connect(context.destination);
   live = { context, stream, graph };
@@ -376,9 +416,7 @@ recordButton.addEventListener("click", async () => {
   }
   try {
     await stopLive();
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: false, channelCount: 1 },
-    });
+    const stream = await openMicrophone();
     const context = new AudioContext({ sampleRate: 48000 });
     const chunks: Float32Array[] = [];
     // ScriptProcessorNode is deprecated but needs no extra module, which is enough for a demo recorder.
