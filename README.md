@@ -206,7 +206,8 @@ Options, all optional:
   words, which listeners hear as dropouts and a metallic background.
 - `pauseAttenuationDb` (default `45`): attenuation reached in pauses, through a
   gate after DeepFilterNet3. The gate reads voice activity on the denoised
-  signal and delays the output by 30 ms so it reopens before the first syllable.
+  signal (ignoring what the model removed, such as keystrokes) and delays the
+  output by 30 ms so it reopens before the first syllable.
   Set it to `speechAttenuationDb` or lower to disable the gate.
 - `bypassUntilReady` (default `true`): pass the microphone through while loading
   and after a failure.

@@ -36,6 +36,10 @@ Add DeepFilterNet3 as a second engine, `@workadventure/noise-suppression/deepfil
   It detects speech on the denoised output, where speech stands far above the residual whatever the noise, and
   delays the output by 30 ms so it reopens before the first syllable. It ignores digital silence when tracking the
   noise floor, otherwise a start-up or a muted microphone would keep it open for seconds.
+- A frame only counts as speech if DeepFilterNet3 also kept most of it (at most 15 dB of attenuation from its input).
+  Keystrokes are loud, but the model removes them, so typing without talking no longer opens the gate: synthetic
+  typing went from 25 dB to 43 dB of attenuation. Measured cost: a word that starts during a keystroke loses about
+  30 ms of its attack (10 ms with a 50 ms lookahead, not worth 20 ms more latency); other noises are unchanged.
 
 ## Consequences
 
